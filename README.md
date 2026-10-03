@@ -1,6 +1,6 @@
-# Wallhaven Download Manager
+# Wallhaven Chrome Downloader
 
-一个非官方的 Chrome 扩展，用于从 Wallhaven 页面挑选壁纸、解析原图地址，并建立可暂停的下载任务。仓库建议名称：`wallhaven-download-manager`。
+一个非官方的 Chrome 扩展，用于从 Wallhaven 页面挑选壁纸、解析原图地址，并建立可暂停的下载任务。GitHub 仓库名：`wallhaven-chrome-downloader`。
 
 本项目目前是 **1.1.0 测试版**。在大量下载前，建议先用两三张图片验证当前 Chrome 和 Wallhaven 登录状态。扩展不会在读取页面、勾选图片、解析 URL 或建立任务时自动开始下载。
 
