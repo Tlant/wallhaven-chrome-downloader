@@ -30,3 +30,10 @@ await buildZip(task,async()=>{},new AbortController().signal);
 assert.equal(task.items[1].status,'done');
 fs.writeFileSync(path.join(os.tmpdir(),'wallhaven-test.zip'),bytes);
 console.log('ZIP bytes:',bytes.length);
+bytes=new Uint8Array();cursor=0;secondFails=true;
+const automatic={id:'retry',items:[
+  {id:'aabbcc',url:'https://w.wallhaven.cc/full/aa/wallhaven-aabbcc.jpg',status:'pending'},
+  {id:'ddeeff',url:'https://w.wallhaven.cc/full/dd/wallhaven-ddeeff.jpg',status:'pending'}
+]};
+await buildZip(automatic,async()=>{},new AbortController().signal,{autoRetry:true,retryCount:1,retryDelaySec:.001,intervalSec:0,timeoutSec:0});
+assert.equal(automatic.items[1].status,'done','ZIP should retry one failed image without restarting the task');

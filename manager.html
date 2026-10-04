@@ -4,5 +4,16 @@
 <section class="panel"><div class="heading"><h2>1 · 当前网页</h2><span id="source"></span></div><div class="toolbar"><button id="scan">读取当前网页图片</button><button id="select-all">全选当前列表</button><button id="select-none">取消当前列表选择</button></div><p id="scope"></p><div id="gallery" class="gallery"></div></section>
 <section class="panel"><div class="heading"><h2>2 · 已选清单</h2><strong id="selected-count">0 张</strong></div><div id="selected-list" class="selected-list"></div><div class="toolbar"><button id="resolve">解析已选图片的真实 URL</button><button id="copy">复制已解析 URL</button><button id="txt">保存 URL 文本（1 个文件）</button><button id="clear">清空已选清单</button></div><p id="resolve-status"></p><textarea id="urls" readonly placeholder="解析后，每行显示一张原图的真实 URL"></textarea><div class="toolbar"><button id="create-files" class="primary">建立逐张下载任务</button><button id="create-zip" class="primary">建立单个 ZIP 任务</button></div></section>
 <section class="panel"><div class="heading"><h2>3 · 任务详情</h2><span>重启 Chrome 后任务保持暂停</span></div><div id="tasks"></div></section>
+<section class="panel"><div class="heading"><h2>下载设置</h2><span>仅影响之后新建的任务</span></div>
+<p>文件保存在 Chrome 默认下载目录内。扩展只能指定其中的相对路径；如需更换下载根目录，请到 <code>chrome://settings/downloads</code> 修改。</p>
+<div class="settings-grid">
+<label>默认子目录<input id="download-dir" type="text" placeholder="Wallhaven"></label>
+<label class="check"><input id="task-folder" type="checkbox"> 每个新任务建立日期编号子目录（如 2026-10-04_0001）</label>
+<label>两张图片之间的间隔（秒）<input id="interval-sec" type="number" min="0" max="300" step="1"></label>
+<label>无进度超时（秒，0 为关闭）<input id="timeout-sec" type="number" min="0" max="3600" step="1"></label>
+<label class="check"><input id="auto-retry" type="checkbox"> 自动重试超时或网络失败（默认关闭）</label>
+<label>每张图片最多重试次数<input id="retry-count" type="number" min="0" max="5" step="1"></label>
+<label>首次重试等待（秒，之后逐次翻倍）<input id="retry-delay-sec" type="number" min="1" max="300" step="1"></label>
+</div><p>保存位置确认框也可能被超时检测中断；使用“每次询问保存位置”时，建议保持超时为 0。短于 30 秒的间隔在 Chrome 休眠后台扩展时可能延长。</p><button id="save-download-settings" class="primary">保存下载设置</button><p id="settings-status"></p></section>
 <section class="panel"><h2>解析方式</h2><label><input id="use-key" type="checkbox"> 优先使用 API Key</label><p>不勾选时，使用当前 Wallhaven 标签页的登录状态读取图片详情，浏览器会自动附带该网站的 Cookie。勾选后若 Key 未填写或失效，会自动回退到网站登录状态。</p><details><summary>填写 API Key（可选）</summary><p>登录 Wallhaven 后，在<a href="https://wallhaven.cc/settings/account" target="_blank" rel="noopener">账户设置</a>获取 API Key。Key 只保存在本机扩展存储，不会写入 URL 文本。</p><input id="key" type="password" autocomplete="off"><button id="save-key">保存解析设置</button></details></section>
 </main><dialog id="confirm"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="toolbar"><button id="confirm-no">返回</button><button id="confirm-yes" class="primary">确认</button></div></dialog><div id="toast" role="status"></div><script type="module" src="manager.js"></script></body></html>

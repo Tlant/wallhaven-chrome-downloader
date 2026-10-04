@@ -3,10 +3,27 @@ const $=id=>document.getElementById(id);
 const sourceId=Number(new URL(location.href).searchParams.get('source'));
 const STORE='wm_ui';
 let ui={gallery:[],selected:{},key:'',useKey:false},zipRun=null,zipTaskId=null,zipHeartbeat=null;
+let downloadSettings=null;
 const store=()=>chrome.storage.local.set({[STORE]:ui});
 async function api(type,data={}){const r=await chrome.runtime.sendMessage({type,...data});if(!r?.ok)throw Error(r?.error||'操作失败');return r;}
 function toast(s){$('toast').textContent=s;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',4500);}
 function selected(){return Object.values(ui.selected);}
+const savePath=(dir,name)=>[dir,name].filter(Boolean).join('/');
+function showDownloadSettings(s){
+  downloadSettings=s;
+  $('download-dir').value=s.dir;
+  $('task-folder').checked=s.taskFolder;
+  $('interval-sec').value=s.intervalSec;
+  $('timeout-sec').value=s.timeoutSec;
+  $('auto-retry').checked=s.autoRetry;
+  $('retry-count').value=s.retryCount;
+  $('retry-delay-sec').value=s.retryDelaySec;
+}
+function formDownloadSettings(){return {
+  dir:$('download-dir').value,taskFolder:$('task-folder').checked,
+  intervalSec:Number($('interval-sec').value),timeoutSec:Number($('timeout-sec').value),
+  autoRetry:$('auto-retry').checked,retryCount:Number($('retry-count').value),retryDelaySec:Number($('retry-delay-sec').value)
+};}
 async function confirmAction(title,text){$('confirm-title').textContent=title;$('confirm-text').textContent=text;$('confirm').showModal();return new Promise(resolve=>{$('confirm-yes').onclick=()=>{$('confirm').close();resolve(true);};$('confirm-no').onclick=()=>{$('confirm').close();resolve(false);};$('confirm').onclose=()=>resolve(false);});}
 function renderSelection(){
   const n=selected().length;$('selected-count').textContent=`${n} 张待下载`;
@@ -90,6 +107,7 @@ async function refreshTasks(){
     const div=document.createElement('div');div.className='task';
     const h=document.createElement('h3');h.textContent=`${t.mode==='zip'?'单个 ZIP':'逐张保存'} · ${t.items.length} 张 · ${t.id.slice(0,8)}`;
     const p=document.createElement('p');p.textContent=`状态：${({paused:'已暂停',running:'进行中',saving:'等待 ZIP 保存',done:'已完成',cancelled:'已取消'})[t.status]||t.status} · 已完成 ${done} 张 · 剩余 ${remaining} 张${t.error?' · '+t.error:''}`;
+    const settingsLine=document.createElement('p');settingsLine.textContent=`保存位置：Chrome 下载目录/${t.relativeDir||''} · 间隔 ${t.settings?.intervalSec||0} 秒 · 自动重试 ${t.settings?.autoRetry?`开启（最多 ${t.settings.retryCount} 次）`:'关闭'}`;
     const active=t.items.find(x=>x.status==='downloading'&&x.downloadId!=null);
     if(active){try{const [d]=await chrome.downloads.search({id:active.downloadId});if(d)p.textContent+=` · 当前 ${active.id}: ${Math.round((d.bytesReceived||0)/1048576*10)/10} MB / ${d.totalBytes>0?`${Math.round(d.totalBytes/1048576*10)/10} MB`:'大小未知'}`;}catch{}}
     const progress=document.createElement('progress');progress.max=t.items.length;progress.value=done;
@@ -98,8 +116,10 @@ async function refreshTasks(){
       const go=document.createElement('button');go.className='primary';go.textContent=t.mode==='zip'?'继续制作并保存 ZIP':'继续逐张保存';
       go.onclick=()=>run(async()=>{
         const count=t.items.filter(x=>x.status!=='done'&&x.status!=='cancelled').length;
+        const retries=t.settings?.autoRetry?t.settings.retryCount:0;
         const dialogs=t.mode==='zip'?1:count;
-        if(!await confirmAction(`确认本次任务：${count} 张图片`,`模式：${t.mode==='zip'?'生成 1 个 ZIP 文件':'逐张保存'}。Chrome 开启“每次询问保存位置”时，预计出现 ${dialogs} 次保存窗口。已完成 ${done} 张，剩余 ${count} 张。确认后才会继续。`))return;
+        const maxDialogs=t.mode==='zip'?1:count*(retries+1);
+        if(!await confirmAction(`确认本次任务：${count} 张图片`,`模式：${t.mode==='zip'?'生成 1 个 ZIP 文件':'逐张保存'}。保存到 Chrome 下载目录/${t.relativeDir||''}。Chrome 开启“每次询问保存位置”时，正常预计 ${dialogs} 次保存窗口${maxDialogs>dialogs?`，失败重试时最多 ${maxDialogs} 次`:''}。已完成 ${done} 张，剩余 ${count} 张。确认后才会继续。`))return;
         if(t.mode==='zip')await startZip(t);else await api('start',{id:t.id});
       });buttons.append(go);
     }
@@ -112,7 +132,7 @@ async function refreshTasks(){
         if(zipTaskId===t.id)zipRun?.abort();await api('cancel',{id:t.id});
       });buttons.append(cancel);
     }
-    div.append(h,p,progress,buttons);$('tasks').append(div);
+    div.append(h,p,settingsLine,progress,buttons);$('tasks').append(div);
   }
 }
 async function startZip(t){
@@ -121,12 +141,12 @@ async function startZip(t){
   try{await api('update',{id:t.id,status:'running',error:'',heartbeat:true});}catch(e){zipRun=null;zipTaskId=null;throw e;}
   zipHeartbeat=setInterval(()=>api('update',{id:t.id,heartbeat:true}).catch(()=>{}),2000);
   try{
-    const file=await buildZip(t,items=>api('update',{id:t.id,items}),signal);
+    const file=await buildZip(t,items=>api('update',{id:t.id,items}),signal,t.settings||{});
     if(signal.aborted)throw Error('已暂停');
     await api('update',{id:t.id,status:'saving',items:t.items});
     const blob=URL.createObjectURL(file);
     try{
-      const id=await chrome.downloads.download({url:blob,filename:`Wallhaven/wallhaven-${t.id.slice(0,8)}.zip`,saveAs:false,conflictAction:'uniquify'});
+      const id=await chrome.downloads.download({url:blob,filename:savePath(t.relativeDir??'Wallhaven',`wallhaven-${t.id.slice(0,8)}.zip`),saveAs:false,conflictAction:'uniquify'});
       while(true){
         if(signal.aborted)throw Error('已暂停');
         const [d]=await chrome.downloads.search({id});
@@ -145,6 +165,11 @@ async function startZip(t){
 async function run(fn){try{await fn();await refreshTasks();}catch(e){toast(e.message);}}
 (async()=>{
   ui={...ui,...(await chrome.storage.local.get(STORE))[STORE]};ui.selected ||= {};ui.gallery ||= [];
+  showDownloadSettings((await api('settings')).settings);
+  $('save-download-settings').onclick=()=>run(async()=>{
+    const r=await api('saveSettings',{settings:formDownloadSettings()});showDownloadSettings(r.settings);
+    $('settings-status').textContent='已保存。仅新建任务会使用这些设置。';
+  });
   $('key').value=ui.key||'';
   $('use-key').checked=!!ui.useKey;
   $('use-key').onchange=async()=>{ui.useKey=$('use-key').checked;await store();toast(ui.useKey?'优先使用 API Key，失败后回退网站登录状态':'使用网站登录状态解析');};
@@ -155,7 +180,7 @@ async function run(fn){try{await fn();await refreshTasks();}catch(e){toast(e.mes
   $('clear').onclick=()=>run(async()=>{ui.selected={};await store();renderSelection();});
   $('resolve').onclick=()=>run(resolveUrls);
   $('copy').onclick=()=>run(async()=>{const list=await readyItems();await navigator.clipboard.writeText(list.map(x=>x.url).join('\n'));toast(`已复制 ${list.length} 条 URL`);});
-  $('txt').onclick=()=>run(async()=>{const list=await readyItems();if(!await confirmAction('保存 URL 文本',`${list.length} 条 URL，每行 1 条。本次将产生 1 次 Chrome 下载保存窗口。`))return;const blob=URL.createObjectURL(new Blob([list.map(x=>x.url).join('\n')+'\n'],{type:'text/plain'}));try{await chrome.downloads.download({url:blob,filename:'Wallhaven/wallhaven-urls.txt',saveAs:false,conflictAction:'uniquify'});}finally{setTimeout(()=>URL.revokeObjectURL(blob),60000);}});
+  $('txt').onclick=()=>run(async()=>{const list=await readyItems();if(!await confirmAction('保存 URL 文本',`${list.length} 条 URL，每行 1 条。本次将产生 1 次 Chrome 下载保存窗口。`))return;const blob=URL.createObjectURL(new Blob([list.map(x=>x.url).join('\n')+'\n'],{type:'text/plain'}));try{await chrome.downloads.download({url:blob,filename:savePath(downloadSettings.dir,'wallhaven-urls.txt'),saveAs:false,conflictAction:'uniquify'});}finally{setTimeout(()=>URL.revokeObjectURL(blob),60000);}});
   $('create-files').onclick=()=>run(async()=>{const items=await readyItems();await api('create',{mode:'files',label:'逐张保存',items});toast(`已建立 ${items.length} 张的任务；尚未下载`);});
   $('create-zip').onclick=()=>run(async()=>{const items=await readyItems();await api('create',{mode:'zip',label:'单个 ZIP',items});toast(`已建立 ${items.length} 张的 ZIP 任务；尚未下载`);});
   renderSelection();await refreshTasks();

@@ -1,27 +1,73 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
-let state={},downloads=[],onMessage,onChanged,onStartup;
+let state={},downloads=[],onMessage,onChanged,onStartup,onAlarm;
+const downloadStates={};
 const chrome={
   storage:{local:{get:async key=>({[key]:state[key]}),set:async x=>Object.assign(state,x)}},
   action:{onClicked:{addListener(){}}},tabs:{create:async()=>{},},runtime:{getURL:x=>x,onMessage:{addListener:f=>onMessage=f},onStartup:{addListener:f=>onStartup=f},onInstalled:{addListener(){}}},
-  downloads:{download:async x=>{downloads.push(x);return downloads.length},cancel:async()=>{},onChanged:{addListener:f=>onChanged=f}}
+  downloads:{download:async x=>{downloads.push(x);downloadStates[downloads.length]={state:'in_progress',bytesReceived:0};return downloads.length},search:async ({id})=>[downloadStates[id]],cancel:async()=>{},onChanged:{addListener:f=>onChanged=f}},
+  alarms:{create:async()=>{},onAlarm:{addListener:f=>onAlarm=f}}
 };
-vm.runInNewContext(fs.readFileSync('background.js','utf8'),{chrome,crypto:globalThis.crypto,console});
+vm.runInNewContext(fs.readFileSync('background.js','utf8'),{chrome,crypto:globalThis.crypto,console,setTimeout,Date});
 const send=m=>new Promise((resolve,reject)=>onMessage(m,null,x=>x.ok?resolve(x):reject(Error(x.error))));
 const items=['aabbcc','ddeeff','112233'].map(id=>({id,url:`https://w.wallhaven.cc/full/${id.slice(0,2)}/wallhaven-${id}.jpg`}));
+await send({type:'saveSettings',settings:{dir:'Wallhaven/Artwork',taskFolder:true,intervalSec:0,timeoutSec:0,autoRetry:false,retryCount:2,retryDelaySec:5}});
 const created=await send({type:'create',mode:'files',items});
 assert.equal(downloads.length,0,'creating a task must not download');
 assert.equal(created.task.status,'paused');
+assert.match(created.task.relativeDir,/^Wallhaven\/Artwork\/\d{4}-\d{2}-\d{2}_0001$/);
 await send({type:'start',id:created.task.id});
+await new Promise(r=>setTimeout(r,10));
 assert.equal(downloads.length,1);
+assert.match(downloads[0].filename,/^Wallhaven\/Artwork\/.*_0001\/wallhaven-aabbcc.jpg$/);
+downloadStates[1].state='complete';
 onChanged({id:1,state:{current:'complete'}});
 await new Promise(r=>setTimeout(r,10));
 assert.equal(downloads.length,2);
 await send({type:'pause',id:created.task.id});
+downloadStates[2].state='complete';
 onChanged({id:2,state:{current:'complete'}});
 await new Promise(r=>setTimeout(r,10));
 assert.equal(downloads.length,2,'pause must prevent the next download');
 await onStartup();
 assert.equal((await send({type:'tasks'})).tasks[0].status,'paused');
+await assert.rejects(send({type:'saveSettings',settings:{dir:'../outside',taskFolder:false,intervalSec:0,timeoutSec:0,autoRetry:false,retryCount:0,retryDelaySec:5}}));
+await send({type:'saveSettings',settings:{dir:'Wallhaven',taskFolder:false,intervalSec:0,timeoutSec:0,autoRetry:true,retryCount:1,retryDelaySec:1}});
+const retryTask=(await send({type:'create',mode:'files',items:[items[0]]})).task;
+await send({type:'start',id:retryTask.id});
+await new Promise(r=>setTimeout(r,10));
+assert.equal(downloads.length,3);
+downloadStates[3].state='interrupted';
+onChanged({id:3,state:{current:'interrupted'},error:{current:'NETWORK_FAILED'}});
+await new Promise(r=>setTimeout(r,1100));
+assert.equal(downloads.length,4,'enabled retry should submit once after the delay');
+downloadStates[4].state='interrupted';
+onChanged({id:4,state:{current:'interrupted'},error:{current:'USER_CANCELED'}});
+await new Promise(r=>setTimeout(r,10));
+assert.equal((await send({type:'tasks'})).tasks.find(x=>x.id===retryTask.id).status,'paused');
+await send({type:'saveSettings',settings:{dir:'Wallhaven',taskFolder:false,intervalSec:1,timeoutSec:0,autoRetry:false,retryCount:0,retryDelaySec:5}});
+const intervalTask=(await send({type:'create',mode:'files',items:items.slice(0,2)})).task;
+await send({type:'start',id:intervalTask.id});await new Promise(r=>setTimeout(r,10));
+assert.equal(downloads.length,5);
+downloadStates[5].state='complete';onChanged({id:5,state:{current:'complete'}});
+await new Promise(r=>setTimeout(r,50));
+assert.equal(downloads.length,5,'interval should delay the next image');
+await new Promise(r=>setTimeout(r,1050));
+assert.equal(downloads.length,6);
+await send({type:'cancel',id:intervalTask.id});
+await send({type:'saveSettings',settings:{dir:'Wallhaven',taskFolder:false,intervalSec:0,timeoutSec:1,autoRetry:false,retryCount:0,retryDelaySec:5}});
+const timeoutTask=(await send({type:'create',mode:'files',items:[items[0]]})).task;
+await send({type:'start',id:timeoutTask.id});await new Promise(r=>setTimeout(r,10));
+await new Promise(r=>setTimeout(r,1050));
+await onAlarm({name:'wm-watchdog'});
+assert.equal((await send({type:'tasks'})).tasks.find(x=>x.id===timeoutTask.id).status,'paused','stalled transfer should pause after timeout');
+await send({type:'saveSettings',settings:{dir:'Wallhaven',taskFolder:false,intervalSec:0,timeoutSec:0,autoRetry:true,retryCount:2,retryDelaySec:1}});
+const restartTask=(await send({type:'create',mode:'files',items:items.slice(0,2)})).task;
+await send({type:'start',id:restartTask.id});await new Promise(r=>setTimeout(r,10));
+const beforeRestart=downloads.length;
+await onStartup();
+await onAlarm({name:`wm-next-${restartTask.id}`});
+assert.equal((await send({type:'tasks'})).tasks.find(x=>x.id===restartTask.id).status,'paused');
+assert.equal(downloads.length,beforeRestart,'startup and pending alarm must not resume downloads');
 console.log('background task safety checks passed');

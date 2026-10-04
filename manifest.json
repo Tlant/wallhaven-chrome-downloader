@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Wallhaven 清单与下载任务",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "可核对选择范围、保存次数与任务进度的 Wallhaven 下载管理器",
   "icons": {
     "16": "icons/icon-16.png",
@@ -9,7 +9,7 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "permissions": ["storage", "tabs", "scripting", "downloads"],
+  "permissions": ["storage", "tabs", "scripting", "downloads", "alarms"],
   "host_permissions": ["https://wallhaven.cc/*", "https://w.wallhaven.cc/*"],
   "background": {"service_worker": "background.js"},
   "action": {
